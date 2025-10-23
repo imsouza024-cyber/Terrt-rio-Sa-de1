@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Mapa de Saúde (Firestore Corrigido v1.4) - Valença RJ</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+
+  <style>
+    /* Estilos (sem alterações) */
+    html, body { height: 100%; margin: 0; padding: 0; }
+    #map { height: 100vh; width: 100%; }
+    .legend { background: white; padding: 10px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.2); line-height: 1.5; max-height: 400px; overflow-y: auto; z-index: 1000; }
+    .legend h4 { margin: 5px 0; }
+    .legend .color-box { width: 16px; height: 16px; display: inline-block; margin-right: 6px; border: 1px solid #555; vertical-align: middle; }
+    .legend .icon-shape { border-radius: 50%; }
+    .legend .area-shape { height: 16px; opacity: 0.5; }
+    .form-container { display: flex; flex-direction: column; gap: 8px; width: 220px; }
+    .form-container label { font-size: 14px; margin-bottom: -4px; }
+    .form-container input, .form-container select, .form-container button { padding: 6px; font-size: 14px; width: 100%; box-sizing: border-box; }
+    .form-container button { background-color: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    .modal-backdrop { display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
+    .modal-content { background-color: #fefefe; padding: 20px; border-radius: 8px; width: 320px; max-width: 92%; }
+    .modal-content h3 { margin-top: 0; }
+    .modal-content form { display: flex; flex-direction: column; gap: 10px; }
+    .modal-content input { padding: 8px; font-size: 14px; }
+    .modal-botoes { display: flex; justify-content: space-between; gap: 10px; margin-top: 10px; }
+    .modal-botoes button { width: 100%; padding: 10px; border-radius: 4px; border: none; cursor: pointer; }
+    .botao-salvar { background-color: #1976d2; color: white; }
+    .botao-cancelar { background-color: #ccc; }
+    .leaflet-control-tools { display: flex; flex-direction: column; gap: 5px; }
+    .leaflet-control-tools .leaflet-bar { padding: 6px 10px; font-size: 14px; font-family: Arial, sans-serif; font-weight: bold; text-align: center; text-decoration: none; color: #333; border-radius: 4px; cursor: pointer; background-color: white; border: 2px solid rgba(0,0,0,0.12); }
+    .leaflet-control-tools .leaflet-bar:hover { background-color: #f4f4f4; }
+    .leaflet-control-tools .leaflet-bar.modo-ativo.modo-paciente { background-color: #c8e6c9; color: #255727; border-color: #8da58d;}
+    .leaflet-control-tools .leaflet-bar.modo-ativo.modo-desenho { background-color: #e1f5fe; color: #01579b; border-color: #75a8c1;}
+    .leaflet-control-tools .leaflet-bar.modo-ativo.modo-remover { background-color: #ffcdd2; color: #b71c1c; border-color: #c68488;}
+    #btn-cancelar-acao { background-color: #f44336; color: white; }
+    .leaflet-draw-toolbar { display: none; }
+    .version-indicator { position: absolute; bottom: 5px; left: 5px; z-index: 1000; background: rgba(255,255,255,0.8); padding: 2px 6px; font-size: 10px; border-radius: 3px; }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+  <div class="version-indicator">Versão: Firestore-v1.4 (Array Fix)</div>
+
+  <div id="modal-comorb-backdrop" class="modal-backdrop">
+    <div class="modal-content">
+      <h3>Adicionar Nova Comorbidade</h3>
+      <form id="form-nova-comorbidade">
+        <label for="nova-comorb-nome">Nome:</label>
+        <input type="text" id="nova-comorb-nome" placeholder="Ex: Asma" required>
+        <label for="nova-comorb-corIcone">Cor do Ícone:</label>
+        <input type="text" id="nova-comorb-corIcone" placeholder="red ou #FF0000" required>
+        <label for="nova-comorb-corRota">Cor da Rota Paciente:</label>
+        <input type="text" id="nova-comorb-corRota" placeholder="red ou #FF0000" required>
+        <div class="modal-botoes">
+          <button type="button" id="botao-comorb-cancelar" class="botao-cancelar">Cancelar</button>
+          <button type="submit" id="botao-comorb-salvar" class="botao-salvar">Salvar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-acs-backdrop" class="modal-backdrop">
+    <div class="modal-content">
+      <h3>Adicionar/Editar Área ACS</h3>
+      <p>Informe os dados do agente:</p>
+      <form id="form-novo-acs">
+        <label for="nova-acs-nome">Nome do Agente (ACS):</label>
+        <input type="text" id="nova-acs-nome" placeholder="Ex: Maria Silva" required>
+        <label for="nova-acs-cor">Cor da Área:</label>
+        <input type="text" id="nova-acs-cor" placeholder="blue ou #0000FF" required>
+        <div class="modal-botoes">
+          <button type="button" id="botao-acs-cancelar" class="botao-cancelar">Cancelar</button>
+          <button type="submit" id="botao-acs-salvar" class="botao-salvar">Salvar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  
+  <script type="module">
+    // Importações do Firebase
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+    import { 
+      getFirestore, collection, addDoc, getDocs, deleteDoc, doc, 
+      setDoc, serverTimestamp, updateDoc, arrayUnion, arrayRemove, getDoc 
+    } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
+
+    // --- Variáveis globais ---
+    var map;
+    var comorbidadesConfig = {};
+    var agentesConfig = {};
+    var pacientes = [];
+    var pacientesLayerGroup, areasAcsLayerGroup;
+    var drawHandler = null;
+    var modoAtual = 'nenhum';
+    var tempAreaGeoJSON = null;
+    var btnComorb, btnAcs, btnPaciente, btnRemoverAcs, btnCancelarAcao;
+    var modalComorbBackdrop, formNovaComorbidade, modalAcsBackdrop, formNovoAcs;
+
+    let app;
+    let db;
+
+    // --- Configuração do Firebase ---
+    // ⚠️ ATENÇÃO: Cole sua configuração aqui
+    const firebaseConfig = {
+     apiKey: "AIzaSyCSBNWaDsESppQuH6-_cJYKEGkaJjFYbyc",
+  authDomain: "mapa-de-saude-52b0c.firebaseapp.com",
+  databaseURL: "https://mapa-de-saude-52b0c-default-rtdb.firebaseio.com",
+  projectId: "mapa-de-saude-52b0c",
+  storageBucket: "mapa-de-saude-52b0c.firebasestorage.app",
+  messagingSenderId: "778496572973",
+  appId: "1:778496572973:web:1e645d9ac29110c0ef82a4",
+  measurementId: "G-JVJN2ET4VR"
+    };
+
+    // Nomes das coleções
+    const COLECOES = {
+      COMORBIDADES: 'comorbidades',
+      AGENTES: 'agentes',
+      PACIENTES: 'pacientes'
+    };
+    
+    // Dados padrão
+    const defaultComorbidades = {
+      diabetes: { nome: "Diabetes", corIcone: "#FF0000", corRotaPaciente: "red" },
+      hipertensao: { nome: "Hipertensão", corIcone: "#0000FF", corRotaPaciente: "blue" }
+    };
+    const defaultAgentes = {};
+    
+    async function loadData() {
+      console.log("Carregando dados do Firestore...");
+      try {
+        // 1. Carregar Comorbidades
+        const comorbSnapshot = await getDocs(collection(db, COLECOES.COMORBIDADES));
+        if (comorbSnapshot.empty) {
+          console.log("Nenhuma comorbidade encontrada, salvando padrões no Firestore...");
+          comorbidadesConfig = JSON.parse(JSON.stringify(defaultComorbidades));
+          for (const key in defaultComorbidades) {
+            await setDoc(doc(db, COLECOES.COMORBIDADES, key), defaultComorbidades[key]);
+          }
+        } else {
+          comorbidadesConfig = {};
+          comorbSnapshot.forEach(doc => {
+            comorbidadesConfig[doc.id] = doc.data();
+          });
+        }
+        // 2. Carregar Agentes
+        const agentesSnapshot = await getDocs(collection(db, COLECOES.AGENTES));
+        agentesConfig = {};
+        agentesSnapshot.forEach(doc => {
+          agentesConfig[doc.id] = doc.data();
+        });
+        // 3. Carregar Pacientes
+        const pacientesSnapshot = await getDocs(collection(db, COLECOES.PACIENTES));
+        pacientes = [];
+        pacientesSnapshot.forEach(doc => {
+          pacientes.push({ id: doc.id, ...doc.data() });
+        });
+        console.log("Dados carregados com sucesso do Firestore.");
+      } catch (e) {
+        console.error("Erro ao carregar dados do Firestore:", e); 
+        alert("ERRO: Não foi possível carregar os dados. Verifique as 'Regras' do Firestore no console do Firebase e o console (F12) para 'Missing or insufficient permissions'.");
+        comorbidadesConfig = JSON.parse(JSON.stringify(defaultComorbidades));
+        agentesConfig = JSON.parse(JSON.stringify(defaultAgentes));
+        pacientes = [];
+      }
+    }
+
+    async function inicializarMapa() {
+      var centerLat = -22.2297562, centerLng = -43.7085038;
+      var centerPoint = [centerLat, centerLng];
+      var lat_offset = 0.01, lng_offset = 0.01;
+      var southWest = L.latLng(centerLat - lat_offset, centerLng - lng_offset),
+        northEast = L.latLng(centerLat + lat_offset, centerLng + lng_offset);
+      var bounds = L.latLngBounds(southWest, northEast);
+      var mapZoom = 17;
+
+      map = L.map("map", { center: centerPoint, zoom: mapZoom, maxBounds: bounds, minZoom: mapZoom - 1 });
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+
+      pacientesLayerGroup = L.layerGroup().addTo(map);
+      areasAcsLayerGroup = L.layerGroup().addTo(map);
+
+      modalComorbBackdrop = document.getElementById("modal-comorb-backdrop");
+      formNovaComorbidade = document.getElementById("form-nova-comorbidade");
+      modalAcsBackdrop = document.getElementById("modal-acs-backdrop");
+      formNovoAcs = document.getElementById("form-novo-acs");
+
+      await loadData(); 
+      
+      carregarEdesenharAreas();
+      redesenharPacientes();
+      inicializarControles(); 
+      inicializarLegenda();
+      atualizarLegenda();
+      inicializarListenersModais(); 
+
+      map.on('click', onMapaClickGeral);
+    }
+
+    // --- Pacientes / Rotas ---
+    function corRotaPorComorbidade(comorbKey) {
+      return comorbidadesConfig[comorbKey] ? comorbidadesConfig[comorbKey].corRotaPaciente : "gray";
+    }
+    
+    async function removerPaciente(pacienteId) {
+      const paciente = pacientes.find(p => p.id === pacienteId);
+      if (!paciente) return;
+      if (!confirm(`Remover paciente "${paciente.nome}"?`)) return;
+      try {
+        await deleteDoc(doc(db, COLECOES.PACIENTES, pacienteId));
+        pacientes = pacientes.filter(p => p.id !== pacienteId);
+        redesenharPacientes();
+        console.log("Paciente removido do Firestore:", pacienteId);
+      } catch (e) {
+        console.error("Erro ao remover paciente:", e);
+        alert("Erro ao remover paciente do banco de dados.");
+      }
+    }
+    
+    async function adicionarPaciente(nome, comorbidadeKey, lat, lng) {
+      var coords = [lat, lng];
+      var novoPaciente = { 
+        nome: nome, 
+        comorbidade: comorbidadeKey, 
+        coords: coords,
+        criadoEm: serverTimestamp()
+      };
+      try {
+        const docRef = await addDoc(collection(db, COLECOES.PACIENTES), novoPaciente);
+        pacientes.push({ id: docRef.id, ...novoPaciente });
+        redesenharPacientes();
+        console.log("Paciente salvo no Firestore com ID:", docRef.id);
+      } catch (e) {
+        console.error("Erro ao salvar paciente:", e);
+        alert("Erro ao salvar paciente no banco de dados.");
+      }
+    }
+    
+    function redesenharPacientes() {
+      pacientesLayerGroup.clearLayers();
+      pacientes.forEach(p => {
+        var config = comorbidadesConfig[p.comorbidade];
+        if (!config) { console.warn("Comorbidade não encontrada para paciente:", p); return; }
+        var marker = L.circleMarker(p.coords, { radius: 8, fillColor: config.corIcone || 'gray', color: "#000", weight: 1, opacity: 1, fillOpacity: 0.9 });
+        marker.pacienteId = p.id;
+        marker.bindPopup(`<b>${p.nome}</b><br>Comorbidade: ${config.nome}<br><small>Clique com botão direito para remover</small>`);
+        marker.on('contextmenu', function(e) { L.DomEvent.preventDefault(e); removerPaciente(p.id); });
+        pacientesLayerGroup.addLayer(marker);
+      });
+    }
+
+    // --- Áreas ACS ---
+    function desenharAreaAcs(key, areaGeoJSON) { // 'areaGeoJSON' é um OBJETO
+      if (!agentesConfig[key]) { console.error("Agente inexistente:", key); return; }
+      var cor = agentesConfig[key].cor;
+      var nome = agentesConfig[key].nome;
+      var areaLayer = L.geoJSON(areaGeoJSON, { style: { color: cor, weight: 3, opacity: 0.7, fillColor: cor, fillOpacity: 0.2 } });
+      areaLayer.acsKey = key;
+      areaLayer.areaGeoJSON = areaGeoJSON; // Salva o OBJETO na camada para referência
+      if (areaGeoJSON.id) areaLayer.areaId = areaGeoJSON.id;
+      areaLayer.on('click', function(e) {
+        if (modoAtual === 'adicionar_paciente') return;
+        if (modoAtual === 'remover_acs') {
+          if (confirm(`Remover área de "${nome}"?`)) {
+            removerAreaAcsPorDados(key, areaGeoJSON); // Passa o OBJETO
+          }
+        } else {
+          L.popup().setLatLng(e.latlng).setContent(`<b>Agente:</b> ${nome}`).openOn(map);
+        }
+        L.DomEvent.stopPropagation(e);
+      });
+      areasAcsLayerGroup.addLayer(areaLayer);
+    }
+    
+    // ** CORREÇÃO 3 (removerAreaAcsPorDados) **
+    async function removerAreaAcsPorDados(key, geojson) { // 'geojson' é o OBJETO da camada
+      const areaId = geojson.id;
+      if (!agentesConfig[key] || !agentesConfig[key].areasGeoJSON) {
+        console.error("Erro: Agente ou áreas não encontradas localmente.");
+        return;
+      }
+
+      // 'agentesConfig[key].areasGeoJSON' é um array de STRINGS
+      // Precisamos encontrar a STRING que corresponde ao ID do objeto 'geojson'
+      const stringParaRemover = agentesConfig[key].areasGeoJSON.find(areaString => {
+        try {
+          const areaObj = JSON.parse(areaString);
+          return areaObj.id === areaId;
+        } catch (e) { return false; }
+      });
+
+      if (!stringParaRemover) {
+        console.error("Não foi possível encontrar a string da área para remover. ID:", areaId);
+        return;
+      }
+      
+      try {
+        const agenteDocRef = doc(db, COLECOES.AGENTES, key);
+        // Remove a STRING específica do array no Firestore
+        await updateDoc(agenteDocRef, {
+            areasGeoJSON: arrayRemove(stringParaRemover)
+        });
+
+        let layerToRemove = null;
+        areasAcsLayerGroup.eachLayer(layer => {
+          if (areaId && layer.areaId === areaId) layerToRemove = layer;
+        });
+        if (layerToRemove) areasAcsLayerGroup.removeLayer(layerToRemove);
+
+        // Remove a STRING do cache local
+        agentesConfig[key].areasGeoJSON = agentesConfig[key].areasGeoJSON.filter(s => s !== stringParaRemover);
+        
+        atualizarLegenda();
+        map.closePopup();
+        setModo('nenhum');
+        console.log("Área removida do Firestore para o agente:", key);
+
+      } catch (e) {
+        console.error("Erro ao remover área do Firestore:", e);
+        alert("Erro ao remover área do banco de dados.");
+      }
+    }
+    
+    // ** CORREÇÃO 2 (carregarEdesenharAreas) **
+    function carregarEdesenharAreas() {
+      areasAcsLayerGroup.clearLayers();
+      for (var key in agentesConfig) {
+        if (agentesConfig[key] && Array.isArray(agentesConfig[key].areasGeoJSON)) {
+          // 'areasGeoJSON' é um array de STRINGS
+          agentesConfig[key].areasGeoJSON.forEach(areaString => {
+            try {
+              // Converte a string de volta para um objeto
+              const areaObj = JSON.parse(areaString); 
+              if (areaObj && areaObj.geometry && areaObj.geometry.coordinates) {
+                desenharAreaAcs(key, areaObj); // Passa o OBJETO para desenhar
+              }
+            } catch (e) {
+              console.error("Erro ao parsear GeoJSON da área ao carregar:", e, areaString);
+            }
+          });
+        } else {
+          if (agentesConfig[key]) agentesConfig[key].areasGeoJSON = [];
+        }
+      }
+    }
+
+    // --- Modo / controles ---
+    function setModo(novoModo) {
+      if (btnPaciente) { btnPaciente.classList.remove('modo-ativo','modo-paciente'); btnPaciente.innerHTML = "Adicionar Paciente"; }
+      if (btnAcs) { btnAcs.classList.remove('modo-ativo','modo-desenho'); btnAcs.innerHTML = "Adicionar Área ACS"; }
+      if (btnRemoverAcs) { btnRemoverAcs.classList.remove('modo-ativo','modo-remover'); btnRemoverAcs.innerHTML = "Remover Área ACS"; }
+      if (btnCancelarAcao) btnCancelarAcao.style.display = 'none';
+      if (drawHandler) {
+        try { map.off('draw:created', onDrawCreated); map.off('draw:drawstop', onDrawStop); drawHandler.disable(); } catch (e) {}
+        drawHandler = null;
+      }
+      modoAtual = novoModo;
+      if (modoAtual === 'adicionar_paciente') {
+        if (btnPaciente) { btnPaciente.classList.add('modo-ativo','modo-paciente'); btnPaciente.innerHTML = "Clique no mapa..."; }
+        if (btnAcs) btnAcs.style.display = 'none'; if (btnComorb) btnComorb.style.display = 'none'; if (btnRemoverAcs) btnRemoverAcs.style.display = 'none';
+        if (btnCancelarAcao) btnCancelarAcao.style.display = 'block';
+      } else if (modoAtual === 'desenhar_acs') {
+        if (btnAcs) { btnAcs.classList.add('modo-ativo','modo-desenho'); btnAcs.innerHTML = "Desenhando..."; }
+        if (btnComorb) btnComorb.style.display = 'none'; if (btnPaciente) btnPaciente.style.display = 'none'; if (btnRemoverAcs) btnRemoverAcs.style.display = 'none';
+        if (btnCancelarAcao) btnCancelarAcao.style.display = 'block';
+        drawHandler = new L.Draw.Polygon(map, { shapeOptions: { color: '#FF00FF', weight: 3, opacity: 0.7, fillColor: '#FF00FF', fillOpacity: 0.2 } });
+        map.on('draw:created', onDrawCreated);
+        map.on('draw:drawstop', onDrawStop);
+        drawHandler.enable();
+      } else if (modoAtual === 'remover_acs') {
+        if (btnRemoverAcs) { btnRemoverAcs.classList.add('modo-ativo','modo-remover'); btnRemoverAcs.innerHTML = "Clique na Área..."; }
+        if (btnComorb) btnComorb.style.display = 'none'; if (btnPaciente) btnPaciente.style.display = 'none'; if (btnAcs) btnAcs.style.display = 'none';
+        if (btnCancelarAcao) btnCancelarAcao.style.display = 'block';
+      } else {
+        if (btnComorb) btnComorb.style.display = 'block'; if (btnAcs) btnAcs.style.display = 'block'; if (btnPaciente) btnPaciente.style.display = 'block'; if (btnRemoverAcs) btnRemoverAcs.style.display = 'block';
+        if (btnCancelarAcao) btnCancelarAcao.style.display = 'none';
+      }
+    }
+
+    // --- Interações do mapa (clique) ---
+    function onMapaClickGeral(e) {
+      if (modoAtual === 'adicionar_paciente') {
+        if (e.originalEvent.target.closest && (e.originalEvent.target.closest(".leaflet-control") || e.originalEvent.target.closest(".leaflet-popup-content-wrapper") || e.originalEvent.target.closest(".leaflet-marker-icon"))) {
+          return;
+        }
+        abrirPopupPaciente(e);
+      }
+    }
+
+    function abrirPopupPaciente(e) {
+      var lat = e.latlng.lat, lng = e.latlng.lng;
+      var container = L.DomUtil.create("div", "form-container");
+      var labelNome = L.DomUtil.create("label", "", container); labelNome.innerHTML = "Nome:";
+      var inputNome = L.DomUtil.create("input", "", container); inputNome.type = "text"; inputNome.placeholder = "Nome do paciente";
+      var labelComorb = L.DomUtil.create("label", "", container); labelComorb.innerHTML = "Comorbidade:";
+      var selectComorb = L.DomUtil.create("select", "", container);
+      for (var key in comorbidadesConfig) {
+        var config = comorbidadesConfig[key];
+        var option = L.DomUtil.create("option", "", selectComorb);
+        option.value = key;
+        option.innerHTML = config.nome;
+      }
+      var buttonAdd = L.DomUtil.create("button", "", container); buttonAdd.type = "button"; buttonAdd.innerHTML = "Adicionar";
+      var popup = L.popup({ closeOnClick: false }).setLatLng(e.latlng).setContent(container).openOn(map);
+      popup.on('remove', function() { setModo('nenhum'); });
+      L.DomEvent.on(buttonAdd, "click", function () {
+        var nome = inputNome.value.trim(), comorbidadeKey = selectComorb.value;
+        if (!nome) { inputNome.style.border = "2px solid red"; inputNome.focus(); return; }
+        adicionarPaciente(nome, comorbidadeKey, lat, lng);
+        map.closePopup();
+      });
+    }
+
+    // --- Draw handlers ---
+    function onDrawCreated(e) {
+      if (modoAtual !== 'desenhar_acs') return;
+      var layer = e.layer;
+      tempAreaGeoJSON = layer.toGeoJSON();
+      mostrarModalAcs();
+    }
+    function onDrawStop(e) {
+      if (modoAtual === 'desenhar_acs') { }
+    }
+
+    // --- Controles (botões) ---
+    function inicializarControles() {
+      var toolControls = L.control({ position: "topleft" });
+      toolControls.onAdd = function (map) {
+        var container = L.DomUtil.create("div", "leaflet-control-tools");
+        L.DomEvent.disableClickPropagation(container);
+        btnComorb = L.DomUtil.create("a", "leaflet-bar", container);
+        btnComorb.href = "#";
+        btnComorb.title = "Adicionar comorbidade";
+        btnComorb.innerHTML = "Adicionar Doença";
+        L.DomEvent.on(btnComorb, "click", function(e) { L.DomEvent.preventDefault(e); setModo('nenhum'); modalComorbBackdrop.style.display = "flex"; });
+        btnAcs = L.DomUtil.create("a", "leaflet-bar", container);
+        btnAcs.href = "#";
+        btnAcs.title = "Desenhar área ACS";
+        btnAcs.innerHTML = "Adicionar Área ACS";
+        L.DomEvent.on(btnAcs, "click", function(e) { L.DomEvent.preventDefault(e); if (modoAtual !== 'desenhar_acs') setModo('desenhar_acs'); });
+        btnPaciente = L.DomUtil.create("a", "leaflet-bar", container);
+        btnPaciente.href = "#";
+        btnPaciente.title = "Adicionar paciente";
+        btnPaciente.innerHTML = "Adicionar Paciente";
+        L.DomEvent.on(btnPaciente, "click", function(e) { L.DomEvent.preventDefault(e); if (modoAtual !== 'adicionar_paciente') setModo('adicionar_paciente'); else setModo('nenhum'); });
+        btnRemoverAcs = L.DomUtil.create("a", "leaflet-bar", container);
+        btnRemoverAcs.href = "#";
+        btnRemoverAcs.title = "Remover área ACS";
+        btnRemoverAcs.innerHTML = "Remover Área ACS";
+        L.DomEvent.on(btnRemoverAcs, "click", function(e) { L.DomEvent.preventDefault(e); if (modoAtual !== 'remover_acs') setModo('remover_acs'); else setModo('nenhum'); });
+        btnCancelarAcao = L.DomUtil.create("a", "leaflet-bar", container);
+        btnCancelarAcao.href = "#";
+        btnCancelarAcao.id = "btn-cancelar-acao";
+        btnCancelarAcao.title = "Cancelar ação atual";
+        btnCancelarAcao.innerHTML = "Cancelar Ação";
+        btnCancelarAcao.style.display = "none";
+        L.DomEvent.on(btnCancelarAcao, "click", function(e) {
+          L.DomEvent.preventDefault(e);
+          if (drawHandler) { try { drawHandler.disable(); } catch (err) {} }
+          setModo('nenhum');
+        });
+        return container;
+      };
+      toolControls.addTo(map);
+    }
+
+    // --- Modais ---
+    function mostrarModalAcs() { modalAcsBackdrop.style.display = "flex"; }
+    function esconderModalAcs() { modalAcsBackdrop.style.display = "none"; formNovoAcs.reset(); tempAreaGeoJSON = null; }
+
+    function inicializarListenersModais() {
+      // Modal Comorbidades
+      function esconderModalComorb() { modalComorbBackdrop.style.display = "none"; formNovaComorbidade.reset(); }
+      
+      document.getElementById("botao-comorb-cancelar").addEventListener("click", esconderModalComorb);
+      
+      formNovaComorbidade.addEventListener("submit", async function(e) {
+        e.preventDefault();
+        var nome = document.getElementById("nova-comorb-nome").value.trim();
+        var corIcone = document.getElementById("nova-comorb-corIcone").value.trim();
+        var corRota = document.getElementById("nova-comorb-corRota").value.trim();
+        if (!nome || !corIcone || !corRota) { alert("Preencha todos os campos."); return; }
+        var colorRegex = /^(#[0-9a-fA-F]{3,6}|[a-zA-Z]+)$/;
+        if (!colorRegex.test(corIcone) || !colorRegex.test(corRota)) { alert("Formato de cor inválido. Use 'red' ou '#FF0000'."); return; }
+        var key = nome.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!key) { alert("Nome inválido."); return; }
+        if (comorbidadesConfig[key]) { alert("Nome de comorbidade (chave) já existe."); return; }
+        var novaComorbidade = { nome: nome, corIcone: corIcone, corRotaPaciente: corRota };
+        try {
+          await setDoc(doc(db, COLECOES.COMORBIDADES, key), novaComorbidade);
+          comorbidadesConfig[key] = novaComorbidade;
+          atualizarLegenda();
+          esconderModalComorb();
+          console.log("Comorbidade salva no Firestore com ID:", key);
+        } catch (err) {
+          console.error("Erro ao salvar comorbidade:", err);
+          alert("Erro ao salvar comorbidade no banco de dados.");
+        }
+      });
+
+      // Modal ACS
+      document.getElementById("botao-acs-cancelar").addEventListener("click", function() {
+        esconderModalAcs();
+        if (drawHandler) { try { drawHandler.disable(); } catch(e) {} }
+        else setModo('nenhum');
+      });
+      
+      // ** CORREÇÃO 1 (formNovoAcs) **
+      formNovoAcs.addEventListener("submit", async function(e) {
+        e.preventDefault();
+        var nome = document.getElementById("nova-acs-nome").value.trim();
+        var cor = document.getElementById("nova-acs-cor").value.trim();
+        if (!nome || !cor) { alert("Preencha todos os campos."); return; }
+        var colorRegex = /^(#[0-9a-fA-F]{3,6}|[a-zA-Z]+)$/;
+        if (!colorRegex.test(cor)) { alert("Formato de cor inválido."); return; }
+        if (!tempAreaGeoJSON) { alert("Área não encontrada. Desenhe novamente."); return; }
+        
+        tempAreaGeoJSON.id = Date.now(); // ID único para a área
+        var key = nome.toLowerCase().replace(/[^a-z0-9]/g, '_'); // ID do documento do agente
+
+        // Converte o objeto GeoJSON em uma string
+        const areaString = JSON.stringify(tempAreaGeoJSON);
+
+        try {
+          const agenteDocRef = doc(db, COLECOES.AGENTES, key);
+          const agenteDocSnap = await getDoc(agenteDocRef);
+
+          if (!agenteDocSnap.exists()) {
+            const novoAgente = {
+              nome: nome,
+              cor: cor,
+              areasGeoJSON: [areaString] // Salva a string no array
+            };
+            await setDoc(agenteDocRef, novoAgente);
+            agentesConfig[key] = novoAgente; // Salva no cache local
+            console.log("Novo agente e área salvos no Firestore:", key);
+          } else {
+            // Adiciona a string da área ao array existente
+            await updateDoc(agenteDocRef, {
+              areasGeoJSON: arrayUnion(areaString) 
+            });
+            // Atualiza cache local
+            if (!agentesConfig[key]) agentesConfig[key] = agenteDocSnap.data();
+            if (!Array.isArray(agentesConfig[key].areasGeoJSON)) agentesConfig[key].areasGeoJSON = [];
+            agentesConfig[key].areasGeoJSON.push(areaString);
+            console.log("Área adicionada ao agente existente:", key);
+          }
+
+          desenharAreaAcs(key, tempAreaGeoJSON); // Passa o objeto original para desenhar
+          atualizarLegenda();
+          esconderModalAcs();
+          setModo('nenhum');
+
+        } catch (err) {
+          console.error("Erro ao salvar área ACS:", err);
+          alert("Erro ao salvar área do agente no banco de dados.");
+        }
+      });
+    }
+
+    // --- Legenda ---
+    var legend;
+    function inicializarLegenda() {
+      legend = L.control({ position: "bottomright" });
+      legend.onAdd = function (map) {
+        var div = L.DomUtil.create("div", "legend");
+        return div;
+      };
+      legend.addTo(map);
+    }
+    function gerarConteudoLegenda() {
+      var html = "<h4>Áreas (Agentes)</h4>";
+      for (var key in agentesConfig) {
+        var config = agentesConfig[key];
+        html += `<div><span class="color-box area-shape" style="background-color: ${config.cor}; border-color: ${config.cor};"></span>${config.nome}</div>`;
+      }
+      html += "<h4 style='margin-top: 10px;'>Pacientes (Comorbidades)</h4>";
+      for (var key in comorbidadesConfig) {
+        var config = comorbidadesConfig[key];
+        html += `<div><span class="color-box icon-shape" style="background-color: ${config.corIcone};"></span> ${config.nome}</div>`;
+      }
+      return html;
+    }
+    function atualizarLegenda() {
+      if (legend && legend.getContainer()) legend.getContainer().innerHTML = gerarConteudoLegenda();
+    }
+
+    // --- Ponto de entrada do Script ---
+    document.addEventListener("DOMContentLoaded", () => {
+      if (firebaseConfig.apiKey.startsWith("SUA_") || firebaseConfig.projectId.startsWith("SEU_")) {
+        alert("⚠️ ERRO DE CONFIGURAÇÃO!\n\nPor favor, substitua os valores 'SUA_API_KEY', 'SEU_PROJECT_ID', etc. no arquivo HTML com as chaves do seu projeto Firebase.");
+        return; 
+      }
+      try {
+        app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+        console.log("Firebase inicializado com sucesso.");
+        inicializarMapa();
+      } catch (e) {
+        console.error("Erro CRÍTICO ao inicializar o Firebase:", e);
+        alert("Erro CRÍTICO ao inicializar o Firebase. Verifique o console (F12) e se as suas chaves de configuração estão corretas.");
+      }
+    });
+
+  </script>
+</body>
+</html>
